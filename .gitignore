@@ -1,8 +1,3 @@
-# Data
-data/
-!data/chinook.db
-!data/.gitkeep
-
 # Logs
 logs/
 
