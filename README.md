@@ -4,6 +4,14 @@ An AI-powered analytics platform that enables users to interact with SQL databas
 
 ---
 
+## 🚀 Live Application
+
+Experience the deployed AI Data Analyst Platform:
+
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://ai-dataa-analyst.streamlit.app/)
+
+🔗 **Live Demo:** [AI Data Analyst Platform](https://ai-dataa-analyst.streamlit.app/)
+
 ## 🚀 Features
 
 - 💬 Ask questions in plain English
