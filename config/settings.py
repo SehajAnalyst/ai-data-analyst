@@ -123,7 +123,7 @@ class AppSettings(BaseSettings):
 
     # --- Database (the user's connected, queryable database) ---
     db_dialect: DatabaseDialect = Field(default=DatabaseDialect.SQLITE)
-    database_url: str = Field(default="sqlite:///./data/sample.db")
+    database_url: str = Field(default="sqlite:///./data/chinook.db")
     db_connect_timeout_seconds: int = Field(default=10)
     db_query_timeout_seconds: int = Field(default=15)
 
