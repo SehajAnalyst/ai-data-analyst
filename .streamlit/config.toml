@@ -1,0 +1,21 @@
+[theme]
+# Kept minimal and neutral at skeleton stage — visual identity is a
+# product decision to be made deliberately later, not defaulted here.
+base = "light"
+
+[server]
+# Streamlit's own file watcher can conflict with the data/ directory's
+# SQLite files changing during query execution in dev. Excluding it
+# avoids spurious app reruns triggered by the app's own database writes.
+folderWatchBlacklist = ["data", "logs"]
+
+[client]
+showErrorDetails = true
+# Production-leaning default: raw exception details (which could
+# include SQL or schema fragments) should not be shown directly in
+# the browser. Full tracebacks belong in logs (logging_setup/), not
+# in the client UI — consistent with exceptions/base.py's
+# message vs. user_message separation.
+
+[client]
+showSidebarNavigation = false

@@ -1,0 +1,54 @@
+# config/llm_config.yaml
+#
+# Non-secret LLM behavior configuration: model names, token limits,
+# temperature, per-provider tuning. API KEYS DO NOT GO HERE — they live
+# only in .env / environment variables. This separation means this file
+# is safe to commit to version control; .env is never committed.
+#
+# Read by core/llm/llm_client_factory.py at provider instantiation time.
+
+providers:
+  claude:
+    model: "claude-sonnet-4-6"
+    max_tokens: 2048
+    temperature: 0.0          # deterministic SQL generation, not creative writing
+    timeout_seconds: 30
+
+  openai:
+    model: "gpt-4.1"
+    max_tokens: 2048
+    temperature: 0.0
+    timeout_seconds: 30
+
+  gemini:
+    model: "gemini-2.5-pro"
+    max_tokens: 2048
+    temperature: 0.0
+    timeout_seconds: 30
+
+  groq:
+    model: "llama-3.3-70b-versatile"
+    max_tokens: 2048
+    temperature: 0.0
+    timeout_seconds: 20        # Groq is fast; tighter timeout is reasonable
+
+# Separate, slightly higher temperature for the insight-generation call,
+# since natural-language explanation benefits from a little more
+# flexibility than SQL generation does. SQL generation should stay at
+# temperature 0.0 always — determinism matters more than creativity there.
+#
+# max_tokens is higher here (700, vs. the 512 originally specified)
+# because the insight response now carries five structured fields
+# (summary, key_trends, outliers, important_metrics, follow_up_questions)
+# plus JSON formatting overhead — 512 was measured as too tight and
+# risked truncated JSON on longer result sets.
+insight_generation:
+  temperature: 0.3
+  max_tokens: 700
+
+# Retry behavior for transient LLM API failures (NOT for SQL validation
+# failures — that retry loop lives in sql_generator.py's own logic with
+# the validator's rejection reason fed back into the prompt).
+retry_policy:
+  max_retries: 2
+  backoff_seconds: 2

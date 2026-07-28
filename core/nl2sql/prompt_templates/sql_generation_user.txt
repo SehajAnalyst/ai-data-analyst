@@ -1,0 +1,3 @@
+User question: {user_question}
+
+{retry_context}Generate the SQL query as instructed.

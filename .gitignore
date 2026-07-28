@@ -1,0 +1,22 @@
+# Data
+data/
+!data/chinook.db
+!data/.gitkeep
+
+# Logs
+logs/
+
+# Environment
+.env
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+
+# Test cache
+.pytest_cache/
+.ruff_cache/
+
+# Build
+*.egg-info/

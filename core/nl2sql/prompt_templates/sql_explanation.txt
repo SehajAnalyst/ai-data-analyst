@@ -1,0 +1,17 @@
+You are explaining a SQL query to a non-technical business user who does not read SQL. Your explanation must be in plain English, free of SQL keywords and jargon (avoid saying "JOIN", "GROUP BY", "WHERE clause", etc. — describe what those operations DO in everyday language instead).
+
+DATABASE SCHEMA (for your context only — do not repeat raw schema details back to the user):
+{schema_context}
+
+SQL QUERY TO EXPLAIN:
+{sql_query}
+
+ORIGINAL QUESTION THE QUERY ANSWERS:
+{user_question}
+
+Write a short explanation (2-4 sentences) covering:
+1. What data the query looks at (which real-world entities, e.g. "customer orders" rather than "the orders table").
+2. What filtering or grouping is being applied, described in plain terms (e.g. "only orders from the last 30 days" rather than "WHERE order_date >= ...").
+3. What the result represents.
+
+Do not include the SQL itself in your answer. Do not use technical database terminology. Write as if explaining to a colleague who asked you to pull this data for them.

@@ -1,0 +1,82 @@
+# config/security_rules.yaml
+#
+# WHY THIS IS A SEPARATE FILE FROM .env / settings.py
+# ----------------------------------------------------
+# .env holds SECRETS and environment-specific values (API keys, DB URLs).
+# This file holds SAFETY POLICY — rules a reviewer or DBA should be able
+# to read and audit without touching code or secrets. Keeping it as YAML
+# (not Python, not buried in settings.py) means:
+#
+#   1. A non-engineer (e.g. a DBA approving production rollout) can read
+#      and review exactly what the AI is and isn't allowed to do.
+#   2. It can be versioned and diffed cleanly in PRs — "this PR adds
+#      table X to the allow-list" is a one-line, reviewable change.
+#   3. It can later be loaded per-environment or per-customer without
+#      touching the settings/secrets system at all.
+#
+# This file is read by core/nl2sql/sql_validator.py at startup.
+# It is NOT a substitute for database-level read-only permissions —
+# see docs/SECURITY.md. This is defense-in-depth layer #1; the DB role
+# is layer #2 and must be configured independently.
+
+sql_safety:
+  # Only these statement types are ever allowed to reach execution.
+  # SELECT and WITH cover ordinary queries and CTEs.
+  # UNION / INTERSECT / EXCEPT are the sqlglot AST root node types for
+  # set operations (UNION ALL, UNION, INTERSECT, EXCEPT) — these are
+  # read-only and must be allowed since they are composed entirely of
+  # SELECT statements. sqlglot parses them as their own top-level type
+  # rather than as a Select, which is why they must be listed explicitly.
+  allowed_statement_types:
+    - SELECT
+    - WITH
+    - UNION
+    - INTERSECT
+    - EXCEPT
+
+  # Statement types that must NEVER be generated or executed, even if
+  # somehow produced by the LLM. Validator should hard-reject on sight.
+  forbidden_keywords:
+    - INSERT
+    - UPDATE
+    - DELETE
+    - DROP
+    - ALTER
+    - TRUNCATE
+    - CREATE
+    - GRANT
+    - REVOKE
+    - EXEC
+    - EXECUTE
+    - ATTACH
+    - DETACH
+    - PRAGMA
+
+  # Reject SQL comments outright — a common vector for smuggling
+  # unexpected logic past naive validators.
+  reject_sql_comments: true
+
+  # Reject multiple statements in one string (stacked queries via ';').
+  reject_multiple_statements: true
+
+  # Hard cap on rows returned, enforced at the query level (LIMIT
+  # injection) not just truncated after fetch.
+  max_rows_returned: 1000
+
+  # Query must complete within this many seconds or be killed.
+  query_timeout_seconds: 15
+
+# Table/column allow-listing. Empty list = all tables in the introspected
+# schema are allowed (suitable for single-tenant/trusted use). For
+# multi-tenant or sensitive data, populate explicitly.
+schema_access:
+  mode: "allow_all"   # allow_all | explicit_allow_list | deny_list
+  allowed_tables: []
+  denied_tables: []
+  denied_columns: []   # e.g. ["users.password_hash", "customers.ssn"]
+
+# Per-provider request limits, independent of LLM token limits — guards
+# against runaway conversation loops driving up API cost.
+rate_limits:
+  max_llm_calls_per_session_per_minute: 20
+  max_query_executions_per_session_per_minute: 30

@@ -1,0 +1,16 @@
+# requirements-dev.txt
+#
+# Development-only tooling: linting, formatting, type checking.
+# NOT installed in production containers/deployments.
+#
+# Install alongside requirements.txt for local development:
+#   pip install -r requirements.txt -r requirements-dev.txt
+
+-r requirements.txt
+
+ruff~=0.7          # linting + formatting (replaces black+flake8+isort
+                     # with one faster tool)
+mypy~=1.13          # static type checking — enforced given this
+                     # codebase's consistent use of type hints throughout
+pre-commit~=4.0     # git hook runner, see .pre-commit-config.yaml note
+                     # in docs/CONTRIBUTING.md (created in implementation phase)

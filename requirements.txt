@@ -1,0 +1,111 @@
+# requirements.txt
+#
+# Organized by subsystem, matching the architecture doc's component
+# breakdown. See the chat response accompanying this skeleton for a
+# full explanation of why each package was chosen, including
+# alternatives considered and rejected.
+#
+# Version pins use compatible-release (~=) where the package has a
+# stable API and exact pins (==) for ones where minor versions have
+# historically introduced breaking changes relevant to this stack.
+# Pin exact versions before any production deployment — these are
+# reasonable starting points for skeleton/development, not a frozen
+# lockfile.
+
+# --- Frontend ---------------------------------------------------------
+streamlit~=1.40
+
+# --- Backend / core language tooling ----------------------------------
+pydantic~=2.9
+pydantic-settings~=2.6
+
+# --- Database / ORM -----------------------------------------------------
+sqlalchemy~=2.0
+psycopg2-binary~=2.9          # PostgreSQL driver (Phase 2, included now for skeleton completeness)
+pymysql~=1.1                   # MySQL driver (Phase 2)
+
+# --- SQL parsing & safety validation -------------------------------------
+sqlglot~=25.0                  # AST-based SQL parsing for sql_validator.py —
+                                 # NOT regex-based; see that module's docstring
+                                 # for why this distinction is non-negotiable
+
+# --- LLM provider SDKs --------------------------------------------------
+# NOTE (production hardening pass): anthropic, openai, and
+# google-generativeai are NOT currently imported anywhere in the
+# codebase — only groq is actually used (see
+# core/llm/llm_client_factory.py — Claude/OpenAI/Gemini raise
+# ConfigurationError if requested). Deliberately kept anyway, unlike
+# chromadb/sentence-transformers below: these three are modest-sized
+# SDK packages (no heavy ML framework like torch), and their stub
+# provider classes (core/llm/providers/claude_provider.py etc.) exist
+# specifically to demonstrate the multi-provider Strategy pattern this
+# architecture is built around. Removing them now would just mean
+# re-adding them the moment any of those providers gets implemented,
+# for negligible install-size benefit. Revisit if install size becomes
+# a real constraint.
+anthropic~=0.39
+openai~=1.54
+google-generativeai~=0.8
+groq~=0.11
+
+# --- Data handling --------------------------------------------------------
+pandas~=2.2
+
+# --- Machine Learning plugins (ml_plugins/) --------------------------------
+scikit-learn~=1.8     # Linear/Logistic Regression, Random Forest, KMeans, Isolation Forest
+statsmodels~=0.14     # ARIMA forecasting — chosen over Prophet; see
+                        # ml_plugins/forecasting/plugin.py docstring for why
+                        # (Prophet's cmdstanpy backend has environment-dependent
+                        # first-run behavior that is a real deployment risk)
+
+# --- Visualization -----------------------------------------------------
+plotly~=5.24
+
+# --- Schema RAG (embeddings + vector store) ------------------------------
+# NOT CURRENTLY INSTALLED — removed during the production hardening
+# pass after confirming neither package is imported anywhere in the
+# codebase. core/schema/schema_context_builder.py's RAG branch is a
+# documented no-op placeholder (settings.schema_rag_enabled just logs
+# a warning and falls through to full-schema inclusion) — the actual
+# embedding/retrieval implementation doesn't exist yet. Installing
+# these now would be pure cost with no corresponding capability:
+# sentence-transformers alone pulls in torch, commonly 500MB-2GB,
+# which means every CI run and Docker build pays that cost for a
+# feature nobody can use. Uncomment BOTH lines below only when Schema
+# RAG is actually implemented — that implementation work needs to
+# happen in schema_context_builder.py before these packages do
+# anything.
+#
+# sentence-transformers~=3.2   # local embedding model — avoids sending
+#                                 # schema metadata to an external embedding
+#                                 # API by default; can be swapped for a
+#                                 # provider embedding API later if preferred
+# chromadb~=0.5                  # lightweight, local-first vector store —
+#                                 # no separate infra required for V1
+
+# --- Configuration / environment -----------------------------------------
+python-dotenv~=1.0
+pyyaml~=6.0                    # for security_rules.yaml / llm_config.yaml
+
+# --- Logging -----------------------------------------------------------
+structlog~=24.4                # structured/JSON logging — see
+                                 # logging_setup/logger.py docstring for
+                                 # why structured logging specifically
+                                 # matters for this app's debugging needs
+
+# --- Testing -------------------------------------------------------------
+pytest~=8.3
+pytest-cov~=6.0
+pytest-mock~=3.14
+
+# NOTE: pytest is listed here (not in requirements-dev.txt) because
+# tests/ are expected to run in CI against the same environment as
+# production code, and some projects run smoke tests against deployed
+# environments. If your deployment pipeline never runs tests against
+# the production image, move these three lines to requirements-dev.txt
+# instead — listed here as the more common default.
+#
+# Linting/formatting/type-checking tools (ruff, mypy) are NOT in this
+# file — see requirements-dev.txt. Installing lint tooling into a
+# production container image is unnecessary bloat; keeping dev-only
+# tools out of this file is a deliberate choice, not an oversight.
