@@ -89,7 +89,7 @@ pyyaml~=6.0                    # for security_rules.yaml / llm_config.yaml
 
 # --- Logging -----------------------------------------------------------
 structlog~=24.4                # structured/JSON logging — see
-                                 # logging_setup/logger.py docstring for
+reportlab~=4.2                                 # logging_setup/logger.py docstring for
                                  # why structured logging specifically
                                  # matters for this app's debugging needs
 
