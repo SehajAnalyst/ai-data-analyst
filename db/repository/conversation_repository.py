@@ -96,6 +96,7 @@ class ConversationRepository:
         execution_status: str | None = None,
         row_count: int | None = None,
         insight_text: str | None = None,
+        insight_data: dict | None = None,
         chart_metadata: dict | None = None,
     ) -> ConversationTurn:
         """
@@ -112,6 +113,7 @@ class ConversationRepository:
             execution_status=execution_status,
             row_count=row_count,
             insight_text=insight_text,
+            insight_data=insight_data,
             chart_metadata=chart_metadata,
         )
 

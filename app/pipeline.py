@@ -20,6 +20,9 @@ user-facing message, so the chat page never needs to handle exceptions.
 
 from __future__ import annotations
 
+from core.execution.result_analyzer import analyze_result
+from core.visualization.chart_selector import select_chart, ChartType
+
 from db.repository.session_factory import get_session
 from db.repository.conversation_repository import ConversationRepository
 from app.state.session_state import (
@@ -193,7 +196,7 @@ def run_pipeline(user_question: str, conversation_history: list[dict]) -> ChatMe
         execution_time_ms=query_result.execution_time_ms,
         insight_summary=insight.summary if insight and not insight.is_empty else None,
     )
-    
+
     session = get_session()
     repo = ConversationRepository(session)
 
@@ -210,7 +213,53 @@ def run_pipeline(user_question: str, conversation_history: list[dict]) -> ChatMe
         conversation_id = conversation.id
         set_current_conversation_id(conversation_id)
 
-    
+
+    # ---------------------------------------------------------
+    # INSIGHT METADATA
+    # ---------------------------------------------------------
+
+    insight_data = None
+
+    if insight and not insight.is_empty:
+        insight_data = {
+            "summary": insight.summary,
+            "key_trends": insight.key_trends,
+            "outliers": insight.outliers,
+            "important_metrics": insight.important_metrics,
+            "follow_up_questions": insight.follow_up_questions,
+            "is_empty": insight.is_empty,
+        }
+
+
+    # ---------------------------------------------------------
+    # CHART METADATA
+    # ---------------------------------------------------------
+
+    chart_metadata = None
+
+    try:
+        shape = analyze_result(query_result)
+        selection = select_chart(shape)
+
+        if selection.chart_type != ChartType.NONE:
+            chart_metadata = {
+                "chart_type": selection.chart_type.value,
+                "x_column": selection.x_column,
+                "y_columns": selection.y_columns,
+                "title": selection.title,
+                "description": selection.description,
+            }
+
+    except Exception as exc:
+        logger.warning(
+            "chart_metadata_generation_failed",
+            error=str(exc)[:200],
+        )
+
+
+    # ---------------------------------------------------------
+    # SAVE CONVERSATION TURN
+    # ---------------------------------------------------------
 
     repo.add_turn(
         conversation_id=conversation_id,
@@ -220,21 +269,24 @@ def run_pipeline(user_question: str, conversation_history: list[dict]) -> ChatMe
         validation_result="VALID",
         execution_status="SUCCESS",
         row_count=row_count,
-        insight_text=insight.summary if insight and not insight.is_empty else None,
-        chart_metadata=None,
+        insight_text=(
+            insight.summary
+            if insight and not insight.is_empty
+            else None
+        ),
+        insight_data=insight_data,
+        chart_metadata=chart_metadata,
     )
 
-    
-
     session.close()
-
-    
+    print("PDF/CHAT DEBUG chart_metadata:", chart_metadata)
     return ChatMessage(
         role="assistant",
         content=response_text,
         sql=cleaned_sql,
         query_result=query_result,
         insight=insight,
+        chart_metadata=chart_metadata,
     )
 
 

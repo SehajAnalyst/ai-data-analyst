@@ -106,7 +106,13 @@ def select_chart(shape: ResultShape) -> ChartSelection:
 
 def _time_series(shape: ResultShape) -> ChartSelection:
     time_col = shape.time_column
-    val_cols = shape.value_columns
+
+    val_cols = [
+        col
+        for col in shape.value_columns
+        if col not in {"sale_id", "product_id"}
+    ]
+
     y_label = ", ".join(val_cols)
     return ChartSelection(
         chart_type=ChartType.LINE,

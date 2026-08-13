@@ -16,7 +16,7 @@ from typing import Callable
 from utils.pdf_export import create_conversation_pdf
 import streamlit as st
 from pathlib import Path
-
+from core.insights.insight_generator import InsightResult
 from app.state.session_state import (
     ChatMessage,
     add_chat_message,
@@ -84,15 +84,15 @@ def _render_section_safely(section_name: str, render_fn: Callable[[], None]) -> 
     
 def _render_db_section() -> None:
     """
-    Database connection section. Lets the user type a SQLite file path
-    (or any SQLAlchemy URL) and connect. Shows current status.
+    Database section.
 
-    Connection is validated by trying to create an engine and fetch
-    the schema — if either fails, the error is shown inline and
-    db_connected is set to False.
+    Users connect to SQLite databases by uploading the database file.
+    Previously used database connections are restored automatically
+    when a conversation is loaded.
     """
+
     st.subheader("Database")
-    
+
     uploaded_db = st.file_uploader(
         "Upload SQLite database",
         type=["db", "sqlite", "sqlite3"],
@@ -110,58 +110,49 @@ def _render_db_section() -> None:
 
         database_url = f"sqlite:///{uploaded_path.as_posix()}"
 
-        st.success(f"Uploaded: {uploaded_db.name}")
+        st.caption(f"📄 {uploaded_db.name}")
 
-        if st.button("Connect Uploaded Database", type="primary", use_container_width=True):
-            _attempt_connection(database_url)
-     
-    current_url = get_db_url() or ""
-    new_url = st.text_input(
-        "Database URL",
-        value=current_url,
-        placeholder="sqlite:///./data/sample.db",
-        help="SQLAlchemy connection URL. For SQLite: sqlite:///path/to/file.db",
-        label_visibility="collapsed",
-    )
-
-    col1, col2 = st.columns([2, 1])
-
-    with col1:
-        connect_clicked = st.button(
-            "Connect",
-            use_container_width=True,
+        if st.button(
+            "Connect Database",
             type="primary",
-        )
+            use_container_width=True,
+        ):
+            _attempt_connection(database_url)
 
-    with col2:
-            if is_db_connected():
-                st.markdown("🟢 Connected")
-            else:
-                st.markdown("🔴 Not Connected")
-    if connect_clicked and new_url.strip():
-        st.write("DEBUG: Connect button clicked")
-        _attempt_connection(new_url.strip())
-
-    elif connect_clicked and not new_url.strip():
-        st.warning("Enter a database URL first.")
+    # ── Current connection status ─────────────────────────────────────
 
     if is_db_connected():
         url = get_db_url() or ""
 
-        # Show just the filename for SQLite, full URL for others.
-        display = url.split("/")[-1] if "sqlite" in url.lower() else url
+        if "sqlite" in url.lower():
+            display_name = Path(url.replace("sqlite:///", "")).name
+        else:
+            display_name = url
 
-        st.caption(f"Connected to: **{display}**")
-
-
+        st.success(
+            f"Connected to **{display_name}**",
+            icon="🟢",
+        )
+    else:
+        st.info(
+            "No database connected.",
+            icon="ℹ️",
+        )
 def _attempt_connection(url: str) -> None:
-    st.write("DEBUG: _attempt_connection() was called")
-
     """
     Tries to connect to the given URL and introspect the schema.
-    On success: sets db_url, db_connected, clears cached schema.
-    On failure: shows the error, leaves db_connected False.
+
+    On success:
+        - stores the database URL
+        - validates the schema
+        - marks the database as connected
+        - refreshes the UI
+
+    On failure:
+        - marks the database as disconnected
+        - shows a user-friendly error
     """
+
     from exceptions.domain_exceptions import (
         DatabaseConnectionError,
         DatabaseFileNotFoundError,
@@ -170,23 +161,17 @@ def _attempt_connection(url: str) -> None:
 
     with st.spinner("Connecting..."):
         try:
-            st.write("STEP 1")
-
+            # Clear any previously cached schema
             invalidate_schema_cache()
 
-            st.write("STEP 2")
-
+            # Store the new database URL
             set_db_url(url)
 
-            st.write("STEP 3")
-
+            # Validate the connection by loading the schema
             get_schema(url)
 
-            st.write("STEP 4")
-
+            # Connection successful
             set_db_connected(True)
-
-            st.write("STEP 5")
 
             st.success("Connected successfully.")
             st.rerun()
@@ -206,6 +191,7 @@ def _attempt_connection(url: str) -> None:
         except Exception as exc:
             set_db_connected(False)
             st.error(f"Connection failed: {exc}")
+
 def _render_schema_section() -> None:
     """
     Displays a database overview including:
@@ -321,19 +307,17 @@ def _render_query_history() -> None:
     """
 
     st.subheader("Conversations")
-    
+
     if st.button("➕ New Chat", key="new_chat"):
         clear_chat_history()
         clear_chat_and_memory()
         set_current_conversation_id(None)
         st.rerun()
-    
+
     session = get_session()
     repo = ConversationRepository(session)
 
     conversations = repo.list_recent_sessions()
-
-    
 
     if not conversations:
         st.caption("No conversations yet.")
@@ -342,7 +326,10 @@ def _render_query_history() -> None:
 
     for conversation in conversations:
 
-        col1, col2 = st.columns([9, 1], vertical_alignment="center")
+        col1, col2 = st.columns(
+            [9, 1],
+            vertical_alignment="center",
+        )
 
         with col1:
             clicked = st.button(
@@ -363,17 +350,23 @@ def _render_query_history() -> None:
                 delete_clicked = st.button(
                     "🗑️ Delete",
                     key=f"delete_{conversation.id}",
-                    width="stretch",)
+                    width="stretch",
+                )
 
                 if delete_clicked:
-                   st.session_state["confirm_delete"] = conversation.id
+                    st.session_state["confirm_delete"] = conversation.id
 
-        # ---------------- Rename ----------------
+        # ---------------------------------------------------------
+        # Rename
+        # ---------------------------------------------------------
 
         if rename_clicked:
             st.session_state["rename_conversation"] = conversation.id
 
-        if st.session_state.get("rename_conversation") == conversation.id:
+        if (
+            st.session_state.get("rename_conversation")
+            == conversation.id
+        ):
 
             new_title = st.text_input(
                 "New conversation name",
@@ -381,7 +374,10 @@ def _render_query_history() -> None:
                 key=f"title_{conversation.id}",
             )
 
-            if st.button("Save", key=f"save_{conversation.id}"):
+            if st.button(
+                "Save",
+                key=f"save_{conversation.id}",
+            ):
 
                 repo.rename_session(
                     conversation.id,
@@ -389,45 +385,80 @@ def _render_query_history() -> None:
                 )
 
                 del st.session_state["rename_conversation"]
+
                 st.rerun()
 
-        # ---------------- Delete ----------------
+        # ---------------------------------------------------------
+        # Delete
+        # ---------------------------------------------------------
 
-        if st.session_state.get("confirm_delete") == conversation.id:
+        if (
+            st.session_state.get("confirm_delete")
+            == conversation.id
+        ):
+
             st.warning("⚠️ Are you sure?")
 
             col1, col2 = st.columns(2)
 
             with col1:
-                if st.button("Yes", key=f"yes_{conversation.id}"):
+                if st.button(
+                    "Yes",
+                    key=f"yes_{conversation.id}",
+                ):
 
-                    repo.delete_session(conversation.id)
+                    repo.delete_session(
+                        conversation.id
+                    )
 
-                    if get_current_conversation_id() == conversation.id:
+                    if (
+                        get_current_conversation_id()
+                        == conversation.id
+                    ):
                         clear_chat_and_memory()
                         set_current_conversation_id(None)
 
-                    st.session_state["confirm_delete"] = None
+                    st.session_state[
+                        "confirm_delete"
+                    ] = None
+
                     session.close()
+
                     st.rerun()
 
             with col2:
-                if st.button("No", key=f"no_{conversation.id}"):
+                if st.button(
+                    "No",
+                    key=f"no_{conversation.id}",
+                ):
 
-                    st.session_state["confirm_delete"] = None
+                    st.session_state[
+                        "confirm_delete"
+                    ] = None
+
                     st.rerun()
 
-        # ---------------- Load Conversation ----------------
+        # ---------------------------------------------------------
+        # Load Conversation
+        # ---------------------------------------------------------
 
         if clicked:
 
-            set_current_conversation_id(conversation.id)
+            set_current_conversation_id(
+                conversation.id
+            )
 
             clear_chat_history()
 
-            turns = repo.get_turns(conversation.id)
+            turns = repo.get_turns(
+                conversation.id
+            )
 
             for turn in turns:
+
+                # -------------------------------------------------
+                # Restore USER message
+                # -------------------------------------------------
 
                 add_chat_message(
                     ChatMessage(
@@ -436,17 +467,29 @@ def _render_query_history() -> None:
                     )
                 )
 
+                # -------------------------------------------------
+                # Restore QUERY RESULT
+                # -------------------------------------------------
+
                 query_result = None
 
                 if turn.generated_sql:
-                    from core.execution.query_executor import execute_query
+
+                    from core.execution.query_executor import (
+                        execute_query,
+                    )
+
                     from app.state.session_state import (
                         set_db_url,
                         set_db_connected,
                     )
 
                     try:
-                        set_db_url(conversation.database_url)
+
+                        set_db_url(
+                            conversation.database_url
+                        )
+
                         set_db_connected(True)
 
                         query_result = execute_query(
@@ -455,7 +498,106 @@ def _render_query_history() -> None:
                         )
 
                     except Exception as exc:
-                        print("Failed to reload query:", exc)
+
+                        print(
+                            f"Failed to reload query: {exc}"
+                        )
+
+                # -------------------------------------------------
+                # Restore INSIGHT
+                # -------------------------------------------------
+
+                insight = None
+
+                # New conversations:
+                # complete insight is stored in chart_metadata.
+                if isinstance(
+                    turn.insight_data,
+                    dict,
+                ):
+
+                    from core.insights.insight_generator import (
+                        InsightResult,
+                    )
+
+                    try:
+
+                        insight = InsightResult(
+                            summary=str(
+                                turn.insight_data.get(
+                                    "summary",
+                                    "",
+                                )
+                            ),
+
+                            key_trends=[
+                                str(item)
+                                for item in turn.insight_data.get(
+                                    "key_trends",
+                                    [],
+                                )
+                            ],
+
+                            outliers=[
+                                str(item)
+                                for item in turn.insight_data.get(
+                                    "outliers",
+                                    [],
+                                )
+                            ],
+
+                            important_metrics=[
+                                str(item)
+                                for item in turn.insight_data.get(
+                                    "important_metrics",
+                                    [],
+                                )
+                            ],
+
+                            follow_up_questions=[
+                                str(item)
+                                for item in turn.insight_data.get(
+                                    "follow_up_questions",
+                                    [],
+                                )
+                            ],
+
+                            is_empty=False,
+                        )
+
+                    except Exception as exc:
+
+                        print(
+                            f"Failed to restore insight: {exc}"
+                        )
+
+                        insight = None
+
+                # -------------------------------------------------
+                # FALLBACK FOR OLD CONVERSATIONS
+                # -------------------------------------------------
+                #
+                # Old records were saved before we started storing
+                # the complete insight in chart_metadata.
+                #
+                # They only contain insight_text, so restore the
+                # summary instead of showing no insight at all.
+                #
+
+                elif turn.insight_text:
+
+                    from core.insights.insight_generator import (
+                        InsightResult,
+                    )
+
+                    insight = InsightResult(
+                        summary=turn.insight_text,
+                        is_empty=False,
+                    )
+
+                # -------------------------------------------------
+                # Restore ASSISTANT message
+                # -------------------------------------------------
 
                 add_chat_message(
                     ChatMessage(
@@ -463,10 +605,12 @@ def _render_query_history() -> None:
                         content=turn.assistant_response,
                         sql=turn.generated_sql,
                         query_result=query_result,
+                        insight=insight,
                     )
                 )
 
             session.close()
+
             st.rerun()
 def _render_controls() -> None:
     """

@@ -268,6 +268,10 @@ def generate_sql(
                 user_message=user_message,
                 temperature=0.0,   # SQL generation must be deterministic
             )
+            print("\n========== SQL GENERATION DEBUG ==========")
+            print("USER QUESTION:", user_question)
+            print("RAW LLM RESPONSE:", llm_response.content)
+            print("==========================================\n")
         except (LLMAPIError,):
             # Don't retry LLM infrastructure failures — let them propagate.
             raise

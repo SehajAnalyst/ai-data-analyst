@@ -74,7 +74,8 @@ class ChatMessage:
     validation_error: str | None = None
     query_result: Any = None     # QueryResult dataclass or None
     error: str | None = None
-    insight: Any = None          # InsightResult dataclass or None — optional,
+    insight: Any = None   
+    chart_metadata: dict | None = None# InsightResult dataclass or None — optional,
                                   # absent if generation failed or was skipped
 
 
@@ -251,13 +252,14 @@ def invalidate_schema_cache() -> None:
 
 # ── Current Conversation ID ─────────────────────────────────────────────
 
-def get_current_conversation_id() -> int | None:
+def get_current_conversation_id() -> str | None:
     return st.session_state[_CURRENT_CONVERSATION_ID]
 
 
-def set_current_conversation_id(conversation_id: int | None) -> None:
+def set_current_conversation_id(
+    conversation_id: str | None,
+) -> None:
     st.session_state[_CURRENT_CONVERSATION_ID] = conversation_id
-
 
 def has_active_conversation() -> bool:
     return get_current_conversation_id() is not None

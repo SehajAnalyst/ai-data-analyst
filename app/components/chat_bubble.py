@@ -76,8 +76,9 @@ def _render_chat_message_inner(message: ChatMessage):
         render_visualization(message.query_result)
 
         print("Rendering insight")
+        print("INSIGHT OBJECT:", message.insight)
         _render_insight(message.insight)
-
+        
     elif message.validation_error and not message.sql:
         print("Rendering validation warning")
         st.warning(f"Could not generate a safe query: {message.validation_error}")

@@ -1,52 +1,8 @@
-"""
-core/insights/insight_generator.py
-=====================================
-
-Generates plain-English business insight narrative from query
-results: a summary, key trends, outliers, important metrics, and
-three follow-up questions.
-
-DESIGN PRINCIPLE: THE LLM NARRATES, IT DOES NOT COMPUTE
---------------------------------------------------------------
-This mirrors the same boundary used everywhere else in this codebase
-(sql_validator.py validates deterministically; the LLM only proposes
-SQL). Here: outlier detection, min/max/mean/median, and value counts
-are all computed in plain Python via pandas BEFORE the LLM is called.
-The LLM's job is to phrase these pre-computed facts in plain English —
-it is explicitly instructed not to invent or recalculate numbers.
-
-Why this matters concretely: asking an LLM "look at this data and
-tell me the outliers" from a sample of rows or from vague stats
-invites fabrication — the model will describe something as
-unusual that isn't, or miss a real outlier that IS unusual, because
-it's pattern-matching on prose, not doing arithmetic. Computing
-outliers with a real IQR (interquartile range) check first and
-handing the LLM the flagged values as fact removes that whole failure
-mode. The LLM cannot claim an outlier exists that wasn't in the
-DATA SUMMARY, because the prompt explicitly forbids it and the
-summary is the only source of numbers it has.
-
-WHY THIS IS A SEPARATE LLM CALL FROM SQL GENERATION
------------------------------------------------------------
-The insight narrative needs the actual query RESULTS, which don't
-exist until after execution — SQL generation happens before execution.
-They are sequentially dependent, not just conceptually separable.
-This also means insight generation can run after results are already
-shown to the user (see app/pipeline.py) without blocking the
-result-display path.
-
-EMPTY RESULTS
---------------
-Zero-row results skip the LLM call entirely. There's nothing to
-narrate, and burning an API call to have a model describe an empty
-table adds latency and cost for no value. A fixed response is
-returned instead, with generic (not data-derived) follow-up
-suggestions.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import re
 
 import pandas as pd
 
@@ -57,23 +13,16 @@ from core.nl2sql.prompt_builder import build_general_prompt
 from exceptions.domain_exceptions import LLMAPIError, LLMTimeoutError
 from logging_setup.logger import LogCategory, get_logger
 
+
 logger = get_logger(__name__)
 
 _MAX_CATEGORICAL_VALUES_SHOWN = 5
-_MIN_ROWS_FOR_OUTLIER_CHECK = 4   # IQR is not meaningful on tiny samples
+_MIN_ROWS_FOR_OUTLIER_CHECK = 4
 _MAX_OUTLIER_EXAMPLES_PER_COLUMN = 3
 
 
 @dataclass
 class InsightResult:
-    """
-    Complete output of one generate_insight() call.
-
-    is_empty distinguishes "zero rows, no LLM call was made" from a
-    normal result — callers (pipeline.py) can render a lighter-weight
-    UI treatment for the empty case rather than a full insights panel.
-    """
-
     summary: str
     key_trends: list[str] = field(default_factory=list)
     outliers: list[str] = field(default_factory=list)
@@ -87,35 +36,48 @@ def generate_insight(
     generated_sql: str,
     result: QueryResult,
 ) -> InsightResult:
-    """
-    Produces a plain-English business insight from a query result.
 
-    Args:
-        user_question: original natural-language question.
-        generated_sql: the SQL that was executed (gives the LLM
-            grounding on what was actually measured).
-        result: query result to analyze.
+    log = logger.bind(
+        category=LogCategory.LLM_CALL,
+        insight_call=True,
+    )
 
-    Returns:
-        InsightResult. Never raises for LLM failures — on any LLM
-        error, returns a minimal InsightResult with a generic summary
-        and empty lists, so a failed insight call degrades gracefully
-        rather than breaking the caller's pipeline. This matches the
-        "optional step" framing: insight generation failing must not
-        prevent the user from seeing their query results.
-
-    Raises:
-        Nothing. All exceptions are caught internally and logged.
-    """
-    log = logger.bind(category=LogCategory.LLM_CALL, insight_call=True)
-
+    # ---------------------------------------------------------
+    # EMPTY RESULT
+    # ---------------------------------------------------------
     if result.row_count == 0:
         log.info("insight_generation_skipped_empty_result")
+
         return _empty_result_insight(user_question)
 
-    df = pd.DataFrame(result.rows, columns=result.columns)
-    data_summary = _build_data_summary(df, result)
+    # ---------------------------------------------------------
+    # BUILD DETERMINISTIC DATA SUMMARY
+    # ---------------------------------------------------------
+    try:
+        df = pd.DataFrame(
+            result.rows,
+            columns=result.columns,
+        )
 
+        data_summary = _build_data_summary(df, result)
+        print("\n===== DATA SUMMARY SENT TO LLM =====")
+        print(data_summary)
+        print("====================================\n")
+
+    except Exception as exc:
+        log.warning(
+            "insight_data_summary_failed",
+            error=str(exc)[:200],
+        )
+
+        return _fallback_insight(
+            result=result,
+            user_question=user_question,
+        )
+
+    # ---------------------------------------------------------
+    # CALL LLM
+    # ---------------------------------------------------------
     try:
         provider = get_llm_provider()
         config = resolve_insight_generation_config()
@@ -127,7 +89,10 @@ def generate_insight(
                 "generated_sql": generated_sql,
                 "data_summary": data_summary,
             },
-            user_message="Generate the business insights as JSON.",
+            user_message=(
+                "Generate the business insights as JSON. "
+                "Use ONLY the facts provided in DATA SUMMARY."
+            ),
         )
 
         response = provider.generate(
@@ -136,199 +101,490 @@ def generate_insight(
             temperature=config.temperature,
             max_tokens=config.max_tokens,
         )
-
+        print("\n===== RAW INSIGHT LLM RESPONSE =====")
+        print(response.content)
+        print("====================================\n")
         parsed = _parse_insight_response(response.content)
+
         if parsed is None:
             log.warning("insight_response_parse_failed")
-            return _fallback_insight()
 
-        log.info("insight_generation_succeeded")
+            return _fallback_insight(
+                result=result,
+                user_question=user_question,
+            )
+
+        # -----------------------------------------------------
+        # MAKE SURE SUMMARY EXISTS
+        # -----------------------------------------------------
+        if not parsed.summary.strip():
+            parsed.summary = _build_basic_summary(
+                result,
+                user_question,
+            )
+
+        # -----------------------------------------------------
+        # MAKE SURE FOLLOW-UP QUESTIONS EXIST
+        # -----------------------------------------------------
+        if not parsed.follow_up_questions:
+            parsed.follow_up_questions = _default_follow_up_questions(
+                result
+            )
+
+        # Maximum 3 questions
+        parsed.follow_up_questions = parsed.follow_up_questions[:3]
+
+        parsed.is_empty = False
+
+        log.info(
+            "insight_generation_succeeded",
+            summary_present=bool(parsed.summary),
+            trends_count=len(parsed.key_trends),
+            outliers_count=len(parsed.outliers),
+            metrics_count=len(parsed.important_metrics),
+            followups_count=len(parsed.follow_up_questions),
+        )
+
         return parsed
 
     except (LLMAPIError, LLMTimeoutError) as exc:
-        log.warning("insight_generation_llm_failed", error=str(exc)[:200])
-        return _fallback_insight()
+
+        log.warning(
+            "insight_generation_llm_failed",
+            error=str(exc)[:200],
+        )
+
+        return _fallback_insight(
+            result=result,
+            user_question=user_question,
+        )
+
     except Exception as exc:
-        log.warning("insight_generation_unexpected_error", error=str(exc)[:200])
-        return _fallback_insight()
+
+        log.warning(
+            "insight_generation_unexpected_error",
+            error=str(exc)[:200],
+        )
+
+        return _fallback_insight(
+            result=result,
+            user_question=user_question,
+        )
 
 
-# ---------------------------------------------------------------------------
-# Deterministic data summarization (no LLM involved)
-# ---------------------------------------------------------------------------
+# =============================================================
+# DETERMINISTIC DATA SUMMARY
+# =============================================================
 
-
-def _build_data_summary(df: pd.DataFrame, result: QueryResult) -> str:
+def _build_data_summary(
+    df: pd.DataFrame,
+    result: QueryResult,
+) -> str:
     """
-    Computes a compact, fact-only text summary of the result set:
-    row/column counts, numeric column stats, categorical value counts,
-    and IQR-based outlier detection.
+    Build a deterministic, factual summary for the insight LLM.
 
-    This is the ONLY source of numbers the LLM prompt receives — see
-    module docstring on why this boundary exists. Every number in the
-    final InsightResult must trace back to something computed here.
+    The summary contains:
+    - result size
+    - column names
+    - actual returned rows (when reasonably small)
+    - numeric statistics
+    - categorical value counts
+    - explicitly detected outliers
+
+    The LLM must use only this information when generating insights.
     """
+
     lines: list[str] = [
-        f"Total rows: {result.row_count}" + (" (truncated — more rows existed)" if result.truncated else ""),
+        f"Total rows: {result.row_count}"
+        + (
+            " (truncated — more rows existed)"
+            if result.truncated
+            else ""
+        ),
         f"Columns: {', '.join(df.columns)}",
         "",
     ]
 
-    numeric_cols = [c for c in df.columns if df[c].dtype.kind in ("i", "f", "u")]
-    categorical_cols = [c for c in df.columns if df[c].dtype.kind == "O"]
+    # =========================================================
+    # ACTUAL RESULT ROWS
+    # =========================================================
+    #
+    # This is important.
+    #
+    # Previously the LLM only received statistics such as:
+    #
+    #   product_name: Chicken Wrap (1)
+    #   category: Wrap (1)
+    #
+    # Now it can also see the actual returned record:
+    #
+    #   product_id=3 | product_name=Chicken Wrap |
+    #   category=Wrap | price=8.50
+    #
+    # This gives the LLM factual context without giving it
+    # access to the database itself.
+    #
+    if not df.empty:
+
+        max_rows_for_context = 20
+
+        rows_to_show = df.head(
+            max_rows_for_context
+        )
+
+        lines.append("Returned rows:")
+
+        for _, row in rows_to_show.iterrows():
+
+            values = []
+
+            for column in df.columns:
+
+                value = row[column]
+
+                if pd.isna(value):
+                    value = "NULL"
+
+                values.append(
+                    f"{column}={value}"
+                )
+
+            lines.append(
+                "  - " + " | ".join(values)
+            )
+
+        if len(df) > max_rows_for_context:
+
+            lines.append(
+                f"  ... {len(df) - max_rows_for_context} "
+                "additional returned rows not shown"
+            )
+
+        lines.append("")
+
+    # =========================================================
+    # COLUMN TYPES
+    # =========================================================
+
+    numeric_cols = [
+        c
+        for c in df.columns
+        if df[c].dtype.kind in ("i", "f", "u")
+    ]
+
+    categorical_cols = [
+        c
+        for c in df.columns
+        if df[c].dtype.kind == "O"
+    ]
+
+    # =========================================================
+    # NUMERIC STATISTICS
+    # =========================================================
 
     if numeric_cols:
-        lines.append("Numeric column statistics:")
+
+        lines.append(
+            "Numeric column statistics:"
+        )
+
         for col in numeric_cols:
-            series = df[col].dropna()
+
+            series = pd.to_numeric(
+                df[col],
+                errors="coerce",
+            ).dropna()
+
             if series.empty:
                 continue
+
             lines.append(
-                f"  - {col}: min={series.min():.2f}, max={series.max():.2f}, "
-                f"mean={series.mean():.2f}, median={series.median():.2f}"
+                f"  - {col}: "
+                f"min={series.min():.2f}, "
+                f"max={series.max():.2f}, "
+                f"mean={series.mean():.2f}, "
+                f"median={series.median():.2f}"
             )
+
         lines.append("")
 
-    outlier_lines = _detect_outliers(df, numeric_cols)
+    # =========================================================
+    # OUTLIERS
+    # =========================================================
+
+    outlier_lines = _detect_outliers(
+        df,
+        numeric_cols,
+    )
+
     if outlier_lines:
-        lines.append("Detected outliers (IQR method — values far outside the typical range):")
-        lines.extend(f"  - {line}" for line in outlier_lines)
-        lines.append("")
+
+        lines.append(
+            "Detected outliers "
+            "(IQR method — values outside the typical range):"
+        )
+
+        lines.extend(
+            f"  - {line}"
+            for line in outlier_lines
+        )
+
     else:
-        lines.append("Detected outliers: none.")
-        lines.append("")
+
+        lines.append(
+            "Detected outliers: none."
+        )
+
+    lines.append("")
+
+    # =========================================================
+    # CATEGORICAL VALUES
+    # =========================================================
 
     if categorical_cols:
-        lines.append("Categorical column value counts (top values):")
+
+        lines.append(
+            "Categorical column value counts "
+            "(top values):"
+        )
+
         for col in categorical_cols:
-            cardinality = df[col].nunique()
+
+            cardinality = df[col].nunique(
+                dropna=True
+            )
+
             if cardinality > 30:
-                lines.append(f"  - {col}: {cardinality} distinct values (too many to list)")
+
+                lines.append(
+                    f"  - {col}: "
+                    f"{cardinality} distinct values "
+                    "(too many to list)"
+                )
+
                 continue
-            counts = df[col].value_counts().head(_MAX_CATEGORICAL_VALUES_SHOWN)
-            formatted = ", ".join(f"{val} ({count})" for val, count in counts.items())
-            lines.append(f"  - {col}: {formatted}")
+
+            counts = (
+                df[col]
+                .value_counts(dropna=False)
+                .head(
+                    _MAX_CATEGORICAL_VALUES_SHOWN
+                )
+            )
+
+            formatted = ", ".join(
+                f"{val} ({count})"
+                for val, count in counts.items()
+            )
+
+            lines.append(
+                f"  - {col}: {formatted}"
+            )
 
     return "\n".join(lines)
 
+# =============================================================
+# OUTLIER DETECTION
+# =============================================================
 
-def _detect_outliers(df: pd.DataFrame, numeric_cols: list[str]) -> list[str]:
-    """
-    Flags outliers per numeric column using the standard IQR method:
-    a value is an outlier if it falls outside
-    [Q1 - 1.5*IQR, Q3 + 1.5*IQR].
+def _detect_outliers(
+    df: pd.DataFrame,
+    numeric_cols: list[str],
+) -> list[str]:
 
-    Returns human-readable strings describing each column's outliers,
-    capped at _MAX_OUTLIER_EXAMPLES_PER_COLUMN examples per column to
-    keep the prompt compact. Skips columns with fewer than
-    _MIN_ROWS_FOR_OUTLIER_CHECK non-null values — IQR on 2-3 points is
-    not statistically meaningful and would produce noise, not signal.
-    """
     results: list[str] = []
 
     for col in numeric_cols:
-        series = df[col].dropna()
+
+        series = pd.to_numeric(
+            df[col],
+            errors="coerce",
+        ).dropna()
+
         if len(series) < _MIN_ROWS_FOR_OUTLIER_CHECK:
             continue
 
         q1 = series.quantile(0.25)
         q3 = series.quantile(0.75)
+
         iqr = q3 - q1
+
         if iqr == 0:
-            continue  # no spread — every value identical, no outliers possible
+            continue
 
         lower_bound = q1 - 1.5 * iqr
         upper_bound = q3 + 1.5 * iqr
-        outliers = series[(series < lower_bound) | (series > upper_bound)]
+
+        outliers = series[
+            (series < lower_bound)
+            | (series > upper_bound)
+        ]
 
         if outliers.empty:
             continue
 
-        examples = outliers.sort_values(ascending=False).head(_MAX_OUTLIER_EXAMPLES_PER_COLUMN)
-        example_str = ", ".join(f"{v:.2f}" for v in examples)
+        examples = (
+            outliers
+            .sort_values(ascending=False)
+            .head(_MAX_OUTLIER_EXAMPLES_PER_COLUMN)
+        )
+
+        example_str = ", ".join(
+            f"{v:.2f}"
+            for v in examples
+        )
+
         results.append(
-            f"{col}: {len(outliers)} outlier value(s) found, "
-            f"outside the normal range of {lower_bound:.2f}–{upper_bound:.2f}. "
-            f"Example value(s): {example_str}"
+            f"{col}: "
+            f"{len(outliers)} outlier value(s), "
+            f"outside {lower_bound:.2f}–{upper_bound:.2f}. "
+            f"Examples: {example_str}"
         )
 
     return results
 
 
-# ---------------------------------------------------------------------------
-# Response parsing
-# ---------------------------------------------------------------------------
+# =============================================================
+# RESPONSE PARSING
+# =============================================================
 
+def _parse_insight_response(
+    raw_content: str,
+) -> InsightResult | None:
 
-def _parse_insight_response(raw_content: str) -> InsightResult | None:
-    """
-    Parses the LLM's JSON response into an InsightResult.
-
-    Uses the same tolerant-parsing approach as
-    core/nl2sql/sql_generator.py (strip markdown code fences, fall
-    back to extracting an embedded JSON object from surrounding
-    prose) — duplicated here rather than imported, since that parsing
-    logic in sql_generator.py is a private, SQL-specific helper not
-    intended as a shared utility. If a third consumer needs this same
-    parsing later, it should be extracted into a shared module then.
-
-    Returns None if parsing fails entirely.
-    """
-    import json
-    import re
+    if not raw_content:
+        return None
 
     cleaned = raw_content.strip()
 
+    # Remove markdown code fences
     if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        cleaned = re.sub(
+            r"^```(?:json)?\s*",
+            "",
+            cleaned,
+        )
+
+        cleaned = re.sub(
+            r"\s*```$",
+            "",
+            cleaned,
+        )
+
         cleaned = cleaned.strip()
 
     try:
+
         data = json.loads(cleaned)
+
     except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+
+        # Try extracting JSON object
+        match = re.search(
+            r"\{.*\}",
+            cleaned,
+            re.DOTALL,
+        )
+
         if not match:
             return None
+
         try:
             data = json.loads(match.group())
+
         except json.JSONDecodeError:
             return None
 
-    try:
-        return InsightResult(
-            summary=str(data.get("summary", "")).strip(),
-            key_trends=_as_str_list(data.get("key_trends")),
-            outliers=_as_str_list(data.get("outliers")),
-            important_metrics=_as_str_list(data.get("important_metrics")),
-            follow_up_questions=_as_str_list(data.get("follow_up_questions"))[:3],
-        )
-    except (TypeError, ValueError):
+    if not isinstance(data, dict):
         return None
 
+    return InsightResult(
+        summary=str(
+            data.get("summary", "")
+        ).strip(),
 
-def _as_str_list(value: object) -> list[str]:
-    """Coerces a JSON value into a list of strings, tolerating a model
-    that returns a single string instead of a list for a field that
-    should be a list."""
+        key_trends=_as_str_list(
+            data.get("key_trends")
+        ),
+
+        outliers=_as_str_list(
+            data.get("outliers")
+        ),
+
+        important_metrics=_as_str_list(
+            data.get("important_metrics")
+        ),
+
+        follow_up_questions=_as_str_list(
+            data.get("follow_up_questions")
+        )[:3],
+    )
+
+
+def _as_str_list(
+    value: object,
+) -> list[str]:
+
     if value is None:
         return []
+
     if isinstance(value, str):
-        return [value] if value.strip() else []
+
+        value = value.strip()
+
+        return [value] if value else []
+
     if isinstance(value, list):
-        return [str(v).strip() for v in value if str(v).strip()]
+
+        return [
+            str(v).strip()
+            for v in value
+            if str(v).strip()
+        ]
+
     return []
 
 
-# ---------------------------------------------------------------------------
-# Fallback / empty-result insights (no LLM call)
-# ---------------------------------------------------------------------------
+# =============================================================
+# FALLBACKS
+# =============================================================
+
+def _build_basic_summary(
+    result: QueryResult,
+    user_question: str,
+) -> str:
+
+    return (
+        f"The query returned {result.row_count} "
+        f"row{'s' if result.row_count != 1 else ''} "
+        f"for the requested analysis."
+    )
 
 
-def _empty_result_insight(user_question: str) -> InsightResult:
-    """Fixed response for zero-row results — no LLM call made. See
-    module docstring for why an empty result skips generation
-    entirely rather than asking the LLM to describe nothing."""
+def _default_follow_up_questions(
+    result: QueryResult,
+) -> list[str]:
+
+    if result.row_count == 1:
+
+        return [
+            "Would you like more details about this result?",
+            "Would you like to compare it with other records?",
+            "Would you like to see related data?",
+        ]
+
+    return [
+        "Would you like to compare these results?",
+        "Would you like to see the results grouped by category?",
+        "Would you like to analyze the key metrics?",
+    ]
+
+
+def _empty_result_insight(
+    user_question: str,
+) -> InsightResult:
+
     return InsightResult(
         summary="No data matched this query.",
         key_trends=[],
@@ -336,21 +592,28 @@ def _empty_result_insight(user_question: str) -> InsightResult:
         important_metrics=[],
         follow_up_questions=[
             "Try broadening the filters in your question.",
-            "Check whether the date range or category you asked about actually has data.",
+            "Check whether the requested category or value exists.",
             "Ask a more general question to see what data is available.",
         ],
         is_empty=True,
     )
 
 
-def _fallback_insight() -> InsightResult:
-    """Returned when the LLM call fails or its response can't be
-    parsed. Keeps the pipeline non-fatal — the user still sees their
-    query results even if the insight narrative couldn't be generated."""
+def _fallback_insight(
+    result: QueryResult,
+    user_question: str,
+) -> InsightResult:
+
     return InsightResult(
-        summary="Insight generation is temporarily unavailable for this result.",
+        summary=_build_basic_summary(
+            result,
+            user_question,
+        ),
         key_trends=[],
         outliers=[],
         important_metrics=[],
-        follow_up_questions=[],
+        follow_up_questions=_default_follow_up_questions(
+            result
+        ),
+        is_empty=False,
     )

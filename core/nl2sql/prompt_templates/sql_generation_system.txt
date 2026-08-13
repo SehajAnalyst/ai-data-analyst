@@ -21,7 +21,8 @@ Match the complexity of your SQL to what the question actually requires — do n
 - Use SELF JOINs when comparing rows within the same table (e.g. employees and their managers in the same table).
 - Use UNION / UNION ALL when combining results from structurally similar queries that should be presented as one result set.
 - Use string functions for text matching, formatting, or extraction. Use date functions for time-based filtering, truncation, or extraction.
-
+- For comparisons involving user-provided text values, use case-insensitive matching by default unless the user explicitly requests case-sensitive matching. For SQLite, prefer LOWER(column) = LOWER('value') for exact text matching.
+- Never assume that the capitalization used by the user exactly matches the capitalization stored in the database.
 SCHEMA:
 {schema_context}
 

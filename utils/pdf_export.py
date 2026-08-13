@@ -17,7 +17,19 @@ from reportlab.platypus import (
     Preformatted,
     Table,
     TableStyle,
+    Image
 )
+from reportlab.platypus import Image
+from PIL import Image as PILImage
+import plotly.io as pio
+
+from core.execution.result_analyzer import analyze_result
+from core.visualization.chart_selector import select_chart, ChartType
+from core.visualization.chart_builders.bar_chart import build_bar_chart
+from core.visualization.chart_builders.line_chart import build_line_chart
+from core.visualization.chart_builders.pie_chart import build_pie_chart
+from core.visualization.chart_builders.scatter_chart import build_scatter_chart
+from core.visualization.chart_builders.histogram_chart import build_histogram
 
 
 def _safe_text(value: Any) -> str:
@@ -268,6 +280,42 @@ def _build_query_table(
 
     return table
 
+def _build_pdf_chart(query_result: Any):
+    """
+    Recreate the appropriate Plotly chart from QueryResult.
+
+    The Plotly Figure is created temporarily for PDF generation.
+    It is NOT stored in the database.
+    """
+    if query_result is None:
+        return None
+
+    try:
+        shape = analyze_result(query_result)
+        selection = select_chart(shape)
+
+        if selection.chart_type == ChartType.NONE:
+            return None
+
+        if selection.chart_type == ChartType.BAR:
+            return build_bar_chart(selection)
+
+        if selection.chart_type == ChartType.LINE:
+            return build_line_chart(selection)
+
+        if selection.chart_type == ChartType.PIE:
+            return build_pie_chart(selection)
+
+        if selection.chart_type == ChartType.SCATTER:
+            return build_scatter_chart(selection)
+
+        if selection.chart_type == ChartType.HISTOGRAM:
+            return build_histogram(selection)
+
+    except Exception:
+        return None
+
+    return None
 
 def create_conversation_pdf(chat_history: list[Any]) -> bytes:
     """
@@ -583,7 +631,287 @@ def create_conversation_pdf(chat_history: list[Any]) -> bytes:
                                 code_style,
                             )
                         )
+            
+                
+            # -------------------------------------------------------
+            # Business Insights
+            # -------------------------------------------------------
 
+            insight = getattr(
+                message,
+                "insight",
+                None,
+            )
+
+            if insight is not None and not getattr(
+                insight,
+                "is_empty",
+                False,
+            ):
+
+                story.append(
+                    Paragraph(
+                        "Business Insights",
+                        heading_style,
+                    )
+                )
+
+                summary = getattr(
+                    insight,
+                    "summary",
+                    None,
+                )
+
+                if summary:
+                    story.append(
+                        Paragraph(
+                            f"<b>Summary:</b> "
+                            f"{_paragraph_text(summary)}",
+                            assistant_style,
+                        )
+                    )
+
+                key_trends = getattr(
+                    insight,
+                    "key_trends",
+                    [],
+                )
+
+                if key_trends:
+
+                    story.append(
+                        Paragraph(
+                            "<b>Key Trends</b>",
+                            assistant_style,
+                        )
+                    )
+
+                    for trend in key_trends:
+                        story.append(
+                            Paragraph(
+                                f"• {_paragraph_text(trend)}",
+                                assistant_style,
+                            )
+                        )
+
+                outliers = getattr(
+                    insight,
+                    "outliers",
+                    [],
+                )
+
+                if outliers:
+
+                    story.append(
+                        Paragraph(
+                            "<b>Outliers</b>",
+                            assistant_style,
+                        )
+                    )
+
+                    for outlier in outliers:
+                        story.append(
+                            Paragraph(
+                                f"• {_paragraph_text(outlier)}",
+                                assistant_style,
+                            )
+                        )
+
+                important_metrics = getattr(
+                    insight,
+                    "important_metrics",
+                    [],
+                )
+
+                if important_metrics:
+
+                    story.append(
+                        Paragraph(
+                            "<b>Important Metrics</b>",
+                            assistant_style,
+                        )
+                    )
+
+                    for metric in important_metrics:
+                        story.append(
+                            Paragraph(
+                                f"• {_paragraph_text(metric)}",
+                                assistant_style,
+                            )
+                        )
+
+                follow_up_questions = getattr(
+                    insight,
+                    "follow_up_questions",
+                    [],
+                )
+
+                if follow_up_questions:
+
+                    story.append(
+                        Paragraph(
+                            "<b>Suggested Follow-up Questions</b>",
+                            assistant_style,
+                        )
+                    )
+
+                    for question in follow_up_questions:
+                        story.append(
+                            Paragraph(
+                                f"• {_paragraph_text(question)}",
+                                assistant_style,
+                            )
+                        )
+
+                story.append(
+                    Spacer(
+                        1,
+                        8,
+                    )
+                )
+            
+            # -------------------------------------------------------
+            # Actual Chart
+            # -------------------------------------------------------
+
+            if query_result is not None:
+
+                try:
+                    fig = _build_pdf_chart(query_result)
+
+                    if fig is not None:
+
+                        image_bytes = fig.to_image(
+                            format="png",
+                            width=1200,
+                            height=600,
+                            scale=2,
+                        )
+
+                        image_buffer = BytesIO(image_bytes)
+
+                        story.append(
+                            Paragraph(
+                                "Chart",
+                                heading_style,
+                            )
+                        )
+
+                        story.append(
+                            Image(
+                                image_buffer,
+                                width=240 * mm,
+                                height=120 * mm,
+                            )
+                        )
+
+                        story.append(
+                            Spacer(
+                                1,
+                                8,
+                            )
+                        )
+
+                except Exception as exc:
+                        story.append(
+                        Paragraph(
+                        f"Chart rendering error: {_paragraph_text(exc)}",
+                            assistant_style,
+                            )
+                            )
+             # -------------------------------------------------------
+            # Chart Information
+            # -------------------------------------------------------
+
+            chart_metadata = getattr(
+                message,
+                "chart_metadata",
+                None,
+            )
+
+            if chart_metadata:
+
+                story.append(
+                    Paragraph(
+                        "Chart",
+                        heading_style,
+                    )
+                )
+
+                chart_type = chart_metadata.get(
+                    "chart_type"
+                )
+
+                chart_title = chart_metadata.get(
+                    "title"
+                )
+
+                chart_description = chart_metadata.get(
+                    "description"
+                )
+
+                x_column = chart_metadata.get(
+                    "x_column"
+                )
+
+                y_columns = chart_metadata.get(
+                    "y_columns",
+                    [],
+                )
+
+                if chart_title:
+                    story.append(
+                        Paragraph(
+                            f"<b>Title:</b> "
+                            f"{_paragraph_text(chart_title)}",
+                            assistant_style,
+                        )
+                    )
+
+                if chart_type:
+                    story.append(
+                        Paragraph(
+                            f"<b>Chart Type:</b> "
+                            f"{_paragraph_text(chart_type)}",
+                            assistant_style,
+                        )
+                    )
+
+                if chart_description:
+                    story.append(
+                        Paragraph(
+                            f"<b>Description:</b> "
+                            f"{_paragraph_text(chart_description)}",
+                            assistant_style,
+                        )
+                    )
+
+                if x_column:
+                    story.append(
+                        Paragraph(
+                            f"<b>X-axis:</b> "
+                            f"{_paragraph_text(x_column)}",
+                            assistant_style,
+                        )
+                    )
+
+                if y_columns:
+                    story.append(
+                        Paragraph(
+                            f"<b>Y-axis:</b> "
+                            f"{_paragraph_text(', '.join(y_columns))}",
+                            assistant_style,
+                        )
+                    )
+
+                story.append(
+                    Spacer(
+                        1,
+                        8,
+                    )
+                )
+            
+            
             # -------------------------------------------------------
             # Error
             # -------------------------------------------------------

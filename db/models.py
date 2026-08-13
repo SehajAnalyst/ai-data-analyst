@@ -112,6 +112,11 @@ class ConversationTurn(Base):
         Text,
         nullable=True,
     )
+    
+    insight_data: Mapped[dict | None] = mapped_column(
+    JSON,
+    nullable=True,
+)
 
     chart_metadata: Mapped[dict | None] = mapped_column(
         JSON,
