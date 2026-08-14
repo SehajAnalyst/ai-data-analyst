@@ -15,3 +15,5 @@ __pycache__/
 
 # Build
 *.egg-info/
+
+data/app_internal.db
