@@ -540,56 +540,6 @@ ai-data-analyst/
 ```
 
 ---
-
-# 💻 Installation
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/SehajAnalyst/ai-data-analyst.git
-cd ai-data-analyst
-```
-
-### 2. Create a virtual environment
-
-```bash
-python -m venv .venv
-```
-
-### 3. Activate it
-
-**Windows**
-
-```powershell
-.venv\Scripts\Activate.ps1
-```
-
-**Linux / macOS**
-
-```bash
-source .venv/bin/activate
-```
-
-### 4. Install dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
-### 5. Configure environment variables
-
-Create a `.env` file and provide the required API credentials.
-
-**Never commit `.env` or API keys to GitHub.**
-
-### 6. Run the application
-
-```bash
-streamlit run app/main.py
-```
-
----
-
 # 🧪 Testing
 
 Run the test suite with:
