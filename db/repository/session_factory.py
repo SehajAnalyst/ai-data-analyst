@@ -3,25 +3,28 @@ db/repository/session_factory.py
 ================================
 
 Creates the SQLAlchemy engine and Session factory for the application's
-internal SQLite database.
+internal database.
 
-This is completely separate from db/connectors/, which manages the
-user's database (SQLite/MySQL/PostgreSQL) that the AI queries.
+This database stores application state such as conversations and
+query history. It is separate from the user's queryable database.
 """
 
-from pathlib import Path
+from config.settings import get_settings
 from db.models import Base
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-DB_PATH = Path("data/app_internal.db")
 
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+settings = get_settings()
+
+DATABASE_URL = settings.internal_db_url
+
 
 engine = create_engine(
     DATABASE_URL,
     future=True,
 )
+
 
 SessionLocal = sessionmaker(
     bind=engine,
@@ -43,5 +46,3 @@ def initialize_database():
     Create all internal tables.
     """
     Base.metadata.create_all(engine)
-    
-    
