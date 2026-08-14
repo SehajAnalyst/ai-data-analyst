@@ -60,7 +60,8 @@ statsmodels~=0.14     # ARIMA forecasting — chosen over Prophet; see
 
 # --- Visualization -----------------------------------------------------
 plotly~=5.24
-kaleido~=1.0
+
+kaleido==1.3.0
 # --- Schema RAG (embeddings + vector store) ------------------------------
 # NOT CURRENTLY INSTALLED — removed during the production hardening
 # pass after confirming neither package is imported anywhere in the
