@@ -5,18 +5,6 @@
 > Ask questions about your database in plain English.
 > The platform understands the schema, generates SQL, validates it through a deterministic security layer, executes it against a read-only database, visualizes the results, and turns the data into business insights.
 
-<p align="center">
-
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?logo=streamlit\&logoColor=white)](https://ai-dataa-analyst.streamlit.app/)
-[![Python](https://img.shields.io/badge/Python-3.x-3776AB?logo=python\&logoColor=white)](https://www.python.org/)
-[![Streamlit](https://img.shields.io/badge/Streamlit-App-FF4B4B?logo=streamlit\&logoColor=white)](https://streamlit.io/)
-[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-Database-D71F00)](https://www.sqlalchemy.org/)
-[![SQLGlot](https://img.shields.io/badge/SQLGlot-SQL%20AST-orange)](https://sqlglot.com/)
-[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?logo=github)](https://github.com/SehajAnalyst/ai-data-analyst)
-
-</p>
-
----
 
 ## 🚀 Live Demo
 
