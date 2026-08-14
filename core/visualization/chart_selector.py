@@ -126,7 +126,13 @@ def _time_series(shape: ResultShape) -> ChartSelection:
 
 def _categorical_numeric(shape: ResultShape) -> ChartSelection:
     cat_col = shape.category_column
-    val_cols = shape.value_columns
+
+    # Exclude identifier columns from chart metrics.
+    val_cols = [
+        col
+        for col in shape.value_columns
+        if col not in {"sale_id", "product_id"}
+    ]
     n_categories = shape.df[cat_col].nunique() if cat_col else 0
 
     # Pie only when single numeric column AND few enough categories.
