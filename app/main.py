@@ -68,6 +68,8 @@ from app.state.session_state import (
 )
 
 init_session_state()
+from db.repository.session_factory import initialize_database
+initialize_database()
 
 # ── Sidebar ────────────────────────────────────────────────────────────────
 
