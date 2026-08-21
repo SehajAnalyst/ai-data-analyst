@@ -153,7 +153,7 @@ def run_example(
             input_tokens=250,
             output_tokens=80,
             latency_ms=55.0,
-            model="llama-3.3-70b-versatile (mocked)",
+            model="openai/gpt-oss-120b (mocked)",
         )
 
         with patch("core.nl2sql.sql_generator.get_llm_provider") as mock_factory:
